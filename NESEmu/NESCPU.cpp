@@ -7,26 +7,24 @@ byte A, X, Y;
 /* 0. carry, 1. zero, 2. decimal [unavail], 3. interrupt disable, 
    4. breakpoint, 5. overflow, 6. negative sign*/
 bitset<8> S;
-word PC, SP;
+byte SP;
+word PC;
 
 byte memory[0xFFFF];
 byte* stack;
 
 byte OP_CYCLES[0xFF];
-void(NESCPU::*ADDR_MODE[0xFF])();
-void(NESCPU::*OP_INSTR[0xFF])();
+void (*ADDR_MODE[0xFF])();
+void (*OP_INSTR[0xFF])();
 
+byte OPCODE;
 byte* OPERAND_ADDR;
+byte OPERAND_VAL;
 
-NESCPU::NESCPU()
-{
-}
+int clockTicks = 0;
 
-NESCPU::~NESCPU()
-{
-}
-
-void NESCPU::init()
+// fix all the accumulator opcodes which I didn't implement at all
+void init()
 {
 	A, X, Y, S = 0;
 	PC = 0; // reset vector!
@@ -38,23 +36,23 @@ void NESCPU::init()
 	OP_CYCLES[0x01] = 6; OP_INSTR[0x01] = ORA; ADDR_MODE[0x01] = indx;
 	OP_CYCLES[0x02] = 2; OP_INSTR[0x02] = NOP; ADDR_MODE[0x02] = implied;
 	OP_CYCLES[0x03] = 2; OP_INSTR[0x03] = NOP; ADDR_MODE[0x03] = implied;
-	OP_CYCLES[0x04] = 3; OP_INSTR[0x04] = NOP; ADDR_MODE[0x04] = zp;
+	OP_CYCLES[0x04] = 3; OP_INSTR[0x04] = NOP; ADDR_MODE[0x04] = implied;
 	OP_CYCLES[0x05] = 3; OP_INSTR[0x05] = ORA; ADDR_MODE[0x05] = zp;
 	OP_CYCLES[0x06] = 5; OP_INSTR[0x06] = ASL; ADDR_MODE[0x06] = zp;
 	OP_CYCLES[0x07] = 2; OP_INSTR[0x07] = NOP; ADDR_MODE[0x07] = implied;
 	OP_CYCLES[0x08] = 3; OP_INSTR[0x08] = PHP; ADDR_MODE[0x08] = implied;
 	OP_CYCLES[0x09] = 3; OP_INSTR[0x09] = ORA; ADDR_MODE[0x09] = immediate;
-	OP_CYCLES[0x0a] = 2; OP_INSTR[0x0a] = ASL; ADDR_MODE[0x0a] = implied;
+	OP_CYCLES[0x0a] = 2; OP_INSTR[0x0a] = ASL; ADDR_MODE[0x0a] = accum;
 	OP_CYCLES[0x0b] = 2; OP_INSTR[0x0b] = NOP; ADDR_MODE[0x0b] = implied;
-	OP_CYCLES[0x0c] = 4; OP_INSTR[0x0c] = NOP; ADDR_MODE[0x0c] = abs;
+	OP_CYCLES[0x0c] = 4; OP_INSTR[0x0c] = NOP; ADDR_MODE[0x0c] = implied;
 	OP_CYCLES[0x0d] = 4; OP_INSTR[0x0d] = ORA; ADDR_MODE[0x0d] = abs;
 	OP_CYCLES[0x0e] = 6; OP_INSTR[0x0e] = ASL; ADDR_MODE[0x0e] = abs;
 	OP_CYCLES[0x0f] = 2; OP_INSTR[0x0f] = NOP; ADDR_MODE[0x0f] = implied;
 	OP_CYCLES[0x10] = 2; OP_INSTR[0x10] = BPL; ADDR_MODE[0x10] = relative;
 	OP_CYCLES[0x11] = 5; OP_INSTR[0x11] = ORA; ADDR_MODE[0x11] = indy;
-	OP_CYCLES[0x12] = 3; OP_INSTR[0x12] = NOP; ADDR_MODE[0x12] = indzp;
+	OP_CYCLES[0x12] = 3; OP_INSTR[0x12] = NOP; ADDR_MODE[0x12] = implied;
 	OP_CYCLES[0x13] = 2; OP_INSTR[0x13] = NOP; ADDR_MODE[0x13] = implied;
-	OP_CYCLES[0x14] = 3; OP_INSTR[0x14] = NOP; ADDR_MODE[0x14] = zp;
+	OP_CYCLES[0x14] = 3; OP_INSTR[0x14] = NOP; ADDR_MODE[0x14] = implied;
 	OP_CYCLES[0x15] = 4; OP_INSTR[0x15] = ORA; ADDR_MODE[0x15] = zpx;
 	OP_CYCLES[0x16] = 6; OP_INSTR[0x16] = ASL; ADDR_MODE[0x16] = zpx;
 	OP_CYCLES[0x17] = 2; OP_INSTR[0x17] = NOP; ADDR_MODE[0x17] = implied;
@@ -62,7 +60,7 @@ void NESCPU::init()
 	OP_CYCLES[0x19] = 4; OP_INSTR[0x19] = ORA; ADDR_MODE[0x19] = absy;
 	OP_CYCLES[0x1a] = 2; OP_INSTR[0x1a] = NOP; ADDR_MODE[0x1a] = implied;
 	OP_CYCLES[0x1b] = 2; OP_INSTR[0x1b] = NOP; ADDR_MODE[0x1b] = implied;
-	OP_CYCLES[0x1c] = 4; OP_INSTR[0x1c] = NOP; ADDR_MODE[0x1c] = abs;
+	OP_CYCLES[0x1c] = 4; OP_INSTR[0x1c] = NOP; ADDR_MODE[0x1c] = implied;
 	OP_CYCLES[0x1d] = 4; OP_INSTR[0x1d] = ORA; ADDR_MODE[0x1d] = absx;
 	OP_CYCLES[0x1e] = 7; OP_INSTR[0x1e] = ASL; ADDR_MODE[0x1e] = absx;
 	OP_CYCLES[0x1f] = 2; OP_INSTR[0x1f] = NOP; ADDR_MODE[0x1f] = implied;
@@ -76,7 +74,7 @@ void NESCPU::init()
 	OP_CYCLES[0x27] = 2; OP_INSTR[0x27] = NOP; ADDR_MODE[0x27] = implied;
 	OP_CYCLES[0x28] = 4; OP_INSTR[0x28] = PLP; ADDR_MODE[0x28] = implied;
 	OP_CYCLES[0x29] = 3; OP_INSTR[0x29] = AND; ADDR_MODE[0x29] = immediate;
-	OP_CYCLES[0x2a] = 2; OP_INSTR[0x2a] = ROL; ADDR_MODE[0x2a] = implied;
+	OP_CYCLES[0x2a] = 2; OP_INSTR[0x2a] = ROL; ADDR_MODE[0x2a] = accum;
 	OP_CYCLES[0x2b] = 2; OP_INSTR[0x2b] = NOP; ADDR_MODE[0x2b] = implied;
 	OP_CYCLES[0x2c] = 4; OP_INSTR[0x2c] = BIT; ADDR_MODE[0x2c] = abs;
 	OP_CYCLES[0x2d] = 4; OP_INSTR[0x2d] = AND; ADDR_MODE[0x2d] = abs;
@@ -84,9 +82,9 @@ void NESCPU::init()
 	OP_CYCLES[0x2f] = 2; OP_INSTR[0x2f] = NOP; ADDR_MODE[0x2f] = implied;
 	OP_CYCLES[0x30] = 2; OP_INSTR[0x30] = BMI; ADDR_MODE[0x30] = relative;
 	OP_CYCLES[0x31] = 5; OP_INSTR[0x31] = AND; ADDR_MODE[0x31] = indy;
-	OP_CYCLES[0x32] = 3; OP_INSTR[0x32] = NOP; ADDR_MODE[0x32] = indzp;
+	OP_CYCLES[0x32] = 3; OP_INSTR[0x32] = NOP; ADDR_MODE[0x32] = implied;
 	OP_CYCLES[0x33] = 2; OP_INSTR[0x33] = NOP; ADDR_MODE[0x33] = implied;
-	OP_CYCLES[0x34] = 4; OP_INSTR[0x34] = NOP; ADDR_MODE[0x34] = zpx;
+	OP_CYCLES[0x34] = 4; OP_INSTR[0x34] = NOP; ADDR_MODE[0x34] = implied;
 	OP_CYCLES[0x35] = 4; OP_INSTR[0x35] = AND; ADDR_MODE[0x35] = zpx;
 	OP_CYCLES[0x36] = 6; OP_INSTR[0x36] = ROL; ADDR_MODE[0x36] = zpx;
 	OP_CYCLES[0x37] = 2; OP_INSTR[0x37] = NOP; ADDR_MODE[0x37] = implied;
@@ -94,7 +92,7 @@ void NESCPU::init()
 	OP_CYCLES[0x39] = 4; OP_INSTR[0x39] = AND; ADDR_MODE[0x39] = absy;
 	OP_CYCLES[0x3a] = 2; OP_INSTR[0x3a] = NOP; ADDR_MODE[0x3a] = implied;
 	OP_CYCLES[0x3b] = 2; OP_INSTR[0x3b] = NOP; ADDR_MODE[0x3b] = implied;
-	OP_CYCLES[0x3c] = 4; OP_INSTR[0x3c] = NOP; ADDR_MODE[0x3c] = absx;
+	OP_CYCLES[0x3c] = 4; OP_INSTR[0x3c] = NOP; ADDR_MODE[0x3c] = implied;
 	OP_CYCLES[0x3d] = 4; OP_INSTR[0x3d] = AND; ADDR_MODE[0x3d] = absx;
 	OP_CYCLES[0x3e] = 7; OP_INSTR[0x3e] = ROL; ADDR_MODE[0x3e] = absx;
 	OP_CYCLES[0x3f] = 2; OP_INSTR[0x3f] = NOP; ADDR_MODE[0x3f] = implied;
@@ -108,7 +106,7 @@ void NESCPU::init()
 	OP_CYCLES[0x47] = 2; OP_INSTR[0x47] = NOP; ADDR_MODE[0x47] = implied;
 	OP_CYCLES[0x48] = 3; OP_INSTR[0x48] = PHA; ADDR_MODE[0x48] = implied;
 	OP_CYCLES[0x49] = 3; OP_INSTR[0x49] = EOR; ADDR_MODE[0x49] = immediate;
-	OP_CYCLES[0x4a] = 2; OP_INSTR[0x4a] = LSR; ADDR_MODE[0x4a] = implied;
+	OP_CYCLES[0x4a] = 2; OP_INSTR[0x4a] = LSR; ADDR_MODE[0x4a] = accum;
 	OP_CYCLES[0x4b] = 2; OP_INSTR[0x4b] = NOP; ADDR_MODE[0x4b] = implied;
 	OP_CYCLES[0x4c] = 3; OP_INSTR[0x4c] = JMP; ADDR_MODE[0x4c] = abs;
 	OP_CYCLES[0x4d] = 4; OP_INSTR[0x4d] = EOR; ADDR_MODE[0x4d] = abs;
@@ -116,7 +114,7 @@ void NESCPU::init()
 	OP_CYCLES[0x4f] = 2; OP_INSTR[0x4f] = NOP; ADDR_MODE[0x4f] = implied;
 	OP_CYCLES[0x50] = 2; OP_INSTR[0x50] = BVC; ADDR_MODE[0x50] = relative;
 	OP_CYCLES[0x51] = 5; OP_INSTR[0x51] = EOR; ADDR_MODE[0x51] = indy;
-	OP_CYCLES[0x52] = 3; OP_INSTR[0x52] = NOP; ADDR_MODE[0x52] = indzp;
+	OP_CYCLES[0x52] = 3; OP_INSTR[0x52] = NOP; ADDR_MODE[0x52] = implied;
 	OP_CYCLES[0x53] = 2; OP_INSTR[0x53] = NOP; ADDR_MODE[0x53] = implied;
 	OP_CYCLES[0x54] = 2; OP_INSTR[0x54] = NOP; ADDR_MODE[0x54] = implied;
 	OP_CYCLES[0x55] = 4; OP_INSTR[0x55] = EOR; ADDR_MODE[0x55] = zpx;
@@ -134,13 +132,13 @@ void NESCPU::init()
 	OP_CYCLES[0x61] = 6; OP_INSTR[0x61] = ADC; ADDR_MODE[0x61] = indx;
 	OP_CYCLES[0x62] = 2; OP_INSTR[0x62] = NOP; ADDR_MODE[0x62] = implied;
 	OP_CYCLES[0x63] = 2; OP_INSTR[0x63] = NOP; ADDR_MODE[0x63] = implied;
-	OP_CYCLES[0x64] = 3; OP_INSTR[0x64] = NOP; ADDR_MODE[0x64] = zp;
+	OP_CYCLES[0x64] = 3; OP_INSTR[0x64] = NOP; ADDR_MODE[0x64] = implied;
 	OP_CYCLES[0x65] = 3; OP_INSTR[0x65] = ADC; ADDR_MODE[0x65] = zp;
 	OP_CYCLES[0x66] = 5; OP_INSTR[0x66] = ROR; ADDR_MODE[0x66] = zp;
 	OP_CYCLES[0x67] = 2; OP_INSTR[0x67] = NOP; ADDR_MODE[0x67] = implied;
 	OP_CYCLES[0x68] = 4; OP_INSTR[0x68] = PLA; ADDR_MODE[0x68] = implied;
 	OP_CYCLES[0x69] = 3; OP_INSTR[0x69] = ADC; ADDR_MODE[0x69] = immediate;
-	OP_CYCLES[0x6a] = 2; OP_INSTR[0x6a] = ROR; ADDR_MODE[0x6a] = implied;
+	OP_CYCLES[0x6a] = 2; OP_INSTR[0x6a] = ROR; ADDR_MODE[0x6a] = accum;
 	OP_CYCLES[0x6b] = 2; OP_INSTR[0x6b] = NOP; ADDR_MODE[0x6b] = implied;
 	OP_CYCLES[0x6c] = 5; OP_INSTR[0x6c] = JMP; ADDR_MODE[0x6c] = indirect;
 	OP_CYCLES[0x6d] = 4; OP_INSTR[0x6d] = ADC; ADDR_MODE[0x6d] = abs;
@@ -148,9 +146,9 @@ void NESCPU::init()
 	OP_CYCLES[0x6f] = 2; OP_INSTR[0x6f] = NOP; ADDR_MODE[0x6f] = implied;
 	OP_CYCLES[0x70] = 2; OP_INSTR[0x70] = BVS; ADDR_MODE[0x70] = relative;
 	OP_CYCLES[0x71] = 5; OP_INSTR[0x71] = ADC; ADDR_MODE[0x71] = indy;
-	OP_CYCLES[0x72] = 3; OP_INSTR[0x72] = NOP; ADDR_MODE[0x72] = indzp;
+	OP_CYCLES[0x72] = 3; OP_INSTR[0x72] = NOP; ADDR_MODE[0x72] = implied;
 	OP_CYCLES[0x73] = 2; OP_INSTR[0x73] = NOP; ADDR_MODE[0x73] = implied;
-	OP_CYCLES[0x74] = 4; OP_INSTR[0x74] = NOP; ADDR_MODE[0x74] = zpx;
+	OP_CYCLES[0x74] = 4; OP_INSTR[0x74] = NOP; ADDR_MODE[0x74] = implied;
 	OP_CYCLES[0x75] = 4; OP_INSTR[0x75] = ADC; ADDR_MODE[0x75] = zpx;
 	OP_CYCLES[0x76] = 6; OP_INSTR[0x76] = ROR; ADDR_MODE[0x76] = zpx;
 	OP_CYCLES[0x77] = 2; OP_INSTR[0x77] = NOP; ADDR_MODE[0x77] = implied;
@@ -158,11 +156,11 @@ void NESCPU::init()
 	OP_CYCLES[0x79] = 4; OP_INSTR[0x79] = ADC; ADDR_MODE[0x79] = absy;
 	OP_CYCLES[0x7a] = 4; OP_INSTR[0x7a] = NOP; ADDR_MODE[0x7a] = implied;
 	OP_CYCLES[0x7b] = 2; OP_INSTR[0x7b] = NOP; ADDR_MODE[0x7b] = implied;
-	OP_CYCLES[0x7c] = 6; OP_INSTR[0x7c] = NOP; ADDR_MODE[0x7c] = indabsx;
+	OP_CYCLES[0x7c] = 6; OP_INSTR[0x7c] = NOP; ADDR_MODE[0x7c] = implied;
 	OP_CYCLES[0x7d] = 4; OP_INSTR[0x7d] = ADC; ADDR_MODE[0x7d] = absx;
 	OP_CYCLES[0x7e] = 7; OP_INSTR[0x7e] = ROR; ADDR_MODE[0x7e] = absx;
 	OP_CYCLES[0x7f] = 2; OP_INSTR[0x7f] = NOP; ADDR_MODE[0x7f] = implied;
-	OP_CYCLES[0x80] = 2; OP_INSTR[0x80] = NOP; ADDR_MODE[0x80] = relative;
+	OP_CYCLES[0x80] = 2; OP_INSTR[0x80] = NOP; ADDR_MODE[0x80] = implied;
 	OP_CYCLES[0x81] = 6; OP_INSTR[0x81] = STA; ADDR_MODE[0x81] = indx;
 	OP_CYCLES[0x82] = 2; OP_INSTR[0x82] = NOP; ADDR_MODE[0x82] = implied;
 	OP_CYCLES[0x83] = 2; OP_INSTR[0x83] = NOP; ADDR_MODE[0x83] = implied;
@@ -171,7 +169,7 @@ void NESCPU::init()
 	OP_CYCLES[0x86] = 2; OP_INSTR[0x86] = STX; ADDR_MODE[0x86] = zp;
 	OP_CYCLES[0x87] = 2; OP_INSTR[0x87] = NOP; ADDR_MODE[0x87] = implied;
 	OP_CYCLES[0x88] = 2; OP_INSTR[0x88] = DEY; ADDR_MODE[0x88] = implied;
-	OP_CYCLES[0x89] = 2; OP_INSTR[0x89] = NOP; ADDR_MODE[0x89] = immediate;
+	OP_CYCLES[0x89] = 2; OP_INSTR[0x89] = NOP; ADDR_MODE[0x89] = implied;
 	OP_CYCLES[0x8a] = 2; OP_INSTR[0x8a] = TXA; ADDR_MODE[0x8a] = implied;
 	OP_CYCLES[0x8b] = 2; OP_INSTR[0x8b] = NOP; ADDR_MODE[0x8b] = implied;
 	OP_CYCLES[0x8c] = 4; OP_INSTR[0x8c] = STY; ADDR_MODE[0x8c] = abs;
@@ -180,7 +178,7 @@ void NESCPU::init()
 	OP_CYCLES[0x8f] = 2; OP_INSTR[0x8f] = NOP; ADDR_MODE[0x8f] = implied;
 	OP_CYCLES[0x90] = 2; OP_INSTR[0x90] = BCC; ADDR_MODE[0x90] = relative;
 	OP_CYCLES[0x91] = 6; OP_INSTR[0x91] = STA; ADDR_MODE[0x91] = indy;
-	OP_CYCLES[0x92] = 3; OP_INSTR[0x92] = NOP; ADDR_MODE[0x92] = indzp;
+	OP_CYCLES[0x92] = 3; OP_INSTR[0x92] = NOP; ADDR_MODE[0x92] = implied;
 	OP_CYCLES[0x93] = 2; OP_INSTR[0x93] = NOP; ADDR_MODE[0x93] = implied;
 	OP_CYCLES[0x94] = 4; OP_INSTR[0x94] = STY; ADDR_MODE[0x94] = zpx;
 	OP_CYCLES[0x95] = 4; OP_INSTR[0x95] = STA; ADDR_MODE[0x95] = zpx;
@@ -190,9 +188,9 @@ void NESCPU::init()
 	OP_CYCLES[0x99] = 5; OP_INSTR[0x99] = STA; ADDR_MODE[0x99] = absy;
 	OP_CYCLES[0x9a] = 2; OP_INSTR[0x9a] = TXS; ADDR_MODE[0x9a] = implied;
 	OP_CYCLES[0x9b] = 2; OP_INSTR[0x9b] = NOP; ADDR_MODE[0x9b] = implied;
-	OP_CYCLES[0x9c] = 4; OP_INSTR[0x9c] = NOP; ADDR_MODE[0x9c] = abs;
+	OP_CYCLES[0x9c] = 4; OP_INSTR[0x9c] = NOP; ADDR_MODE[0x9c] = implied;
 	OP_CYCLES[0x9d] = 5; OP_INSTR[0x9d] = STA; ADDR_MODE[0x9d] = absx;
-	OP_CYCLES[0x9e] = 5; OP_INSTR[0x9e] = NOP; ADDR_MODE[0x9e] = absx;
+	OP_CYCLES[0x9e] = 5; OP_INSTR[0x9e] = NOP; ADDR_MODE[0x9e] = implied;
 	OP_CYCLES[0x9f] = 2; OP_INSTR[0x9f] = NOP; ADDR_MODE[0x9f] = implied;
 	OP_CYCLES[0xa0] = 3; OP_INSTR[0xa0] = LDY; ADDR_MODE[0xa0] = immediate;
 	OP_CYCLES[0xa1] = 6; OP_INSTR[0xa1] = LDA; ADDR_MODE[0xa1] = indx;
@@ -212,7 +210,7 @@ void NESCPU::init()
 	OP_CYCLES[0xaf] = 2; OP_INSTR[0xaf] = NOP; ADDR_MODE[0xaf] = implied;
 	OP_CYCLES[0xb0] = 2; OP_INSTR[0xb0] = BCS; ADDR_MODE[0xb0] = relative;
 	OP_CYCLES[0xb1] = 5; OP_INSTR[0xb1] = LDA; ADDR_MODE[0xb1] = indy;
-	OP_CYCLES[0xb2] = 3; OP_INSTR[0xb2] = NOP; ADDR_MODE[0xb2] = indzp;
+	OP_CYCLES[0xb2] = 3; OP_INSTR[0xb2] = NOP; ADDR_MODE[0xb2] = implied;
 	OP_CYCLES[0xb3] = 2; OP_INSTR[0xb3] = NOP; ADDR_MODE[0xb3] = implied;
 	OP_CYCLES[0xb4] = 4; OP_INSTR[0xb4] = LDY; ADDR_MODE[0xb4] = zpx;
 	OP_CYCLES[0xb5] = 4; OP_INSTR[0xb5] = LDA; ADDR_MODE[0xb5] = zpx;
@@ -244,7 +242,7 @@ void NESCPU::init()
 	OP_CYCLES[0xcf] = 2; OP_INSTR[0xcf] = NOP; ADDR_MODE[0xcf] = implied;
 	OP_CYCLES[0xd0] = 2; OP_INSTR[0xd0] = BNE; ADDR_MODE[0xd0] = relative;
 	OP_CYCLES[0xd1] = 5; OP_INSTR[0xd1] = CMP; ADDR_MODE[0xd1] = indy;
-	OP_CYCLES[0xd2] = 3; OP_INSTR[0xd2] = NOP; ADDR_MODE[0xd2] = indzp;
+	OP_CYCLES[0xd2] = 3; OP_INSTR[0xd2] = NOP; ADDR_MODE[0xd2] = implied;
 	OP_CYCLES[0xd3] = 2; OP_INSTR[0xd3] = NOP; ADDR_MODE[0xd3] = implied;
 	OP_CYCLES[0xd4] = 2; OP_INSTR[0xd4] = NOP; ADDR_MODE[0xd4] = implied;
 	OP_CYCLES[0xd5] = 4; OP_INSTR[0xd5] = CMP; ADDR_MODE[0xd5] = zpx;
@@ -276,7 +274,7 @@ void NESCPU::init()
 	OP_CYCLES[0xef] = 2; OP_INSTR[0xef] = NOP; ADDR_MODE[0xef] = implied;
 	OP_CYCLES[0xf0] = 2; OP_INSTR[0xf0] = BEQ; ADDR_MODE[0xf0] = relative;
 	OP_CYCLES[0xf1] = 5; OP_INSTR[0xf1] = SBC; ADDR_MODE[0xf1] = indy;
-	OP_CYCLES[0xf2] = 3; OP_INSTR[0xf2] = NOP; ADDR_MODE[0xf2] = indzp;
+	OP_CYCLES[0xf2] = 3; OP_INSTR[0xf2] = NOP; ADDR_MODE[0xf2] = implied;
 	OP_CYCLES[0xf3] = 2; OP_INSTR[0xf3] = NOP; ADDR_MODE[0xf3] = implied;
 	OP_CYCLES[0xf4] = 2; OP_INSTR[0xf4] = NOP; ADDR_MODE[0xf4] = implied;
 	OP_CYCLES[0xf5] = 4; OP_INSTR[0xf5] = SBC; ADDR_MODE[0xf5] = zpx;
@@ -292,83 +290,106 @@ void NESCPU::init()
 	OP_CYCLES[0xff] = 2; OP_INSTR[0xff] = NOP; ADDR_MODE[0xff] = implied;
 }
 
-void NESCPU::exec()
+void exec()
 {
-
+	OPCODE = memory[PC++];
+	clockTicks += OP_CYCLES[OPCODE];
+	(OP_INSTR[OPCODE])();
 }
 
-void NESCPU::implied()
+void implied()
 {
-
+	// do nothing
 }
-void NESCPU::immediate()
+void immediate()
 {
-
+	OPERAND_VAL = memory[PC++];
+	OPERAND_ADDR = &OPERAND_VAL;
 }
-void NESCPU::abs()
+void abs()
 {
-
+	OPERAND_ADDR = &memory[memory[PC++] + (memory[PC++] << 8)];
 }
-void NESCPU::relative()
+void relative() // fix
 {
-
+	OPERAND_VAL = memory[PC++];
+	if (OPERAND_VAL & 0x80)
+		OPERAND_VAL -= (byte) 0x100;
+	if (OPERAND_VAL >> 8 != PC >> 8)
+		clockTicks++;
+	OPERAND_ADDR = &OPERAND_VAL;
 }
-void NESCPU::indirect()
+void indirect()
 {
-
+	word addr = memory[PC++] + (memory[PC++] << 8);
+	OPERAND_VAL = memory[addr] + (memory[addr + 1] << 8);
+	OPERAND_ADDR = &OPERAND_VAL;
 }
-void NESCPU::absx()
+void absx()
 {
-
+	OPERAND_VAL = memory[PC++] + (memory[PC++] << 8);
+	if (OP_CYCLES[OPCODE] == 4)
+		if (OPERAND_VAL >> 8 != (OPERAND_VAL + X) >> 8)
+			clockTicks++;
+	OPERAND_VAL += X;
+	OPERAND_ADDR = &memory[OPERAND_VAL];
 }
-void NESCPU::absy()
+void absy()
 {
-
+	OPERAND_VAL = memory[PC++] + (memory[PC++] << 8);
+	if (OP_CYCLES[OPCODE] == 4)
+		if (OPERAND_VAL >> 8 != (OPERAND_VAL + Y) >> 8)
+			clockTicks++;
+	OPERAND_VAL += Y;
+	OPERAND_ADDR = &memory[OPERAND_VAL];
 }
-void NESCPU::zp()
+void zp()
 {
-
+	OPERAND_ADDR = &memory[PC++];
 }
-void NESCPU::zpx()
+void zpx()
 {
-
+	OPERAND_ADDR = &memory[(memory[PC++] + X) & 0x00FF];
 }
-void NESCPU::zpy()
+void zpy()
 {
-
+	OPERAND_ADDR = &memory[(memory[PC++] + Y) & 0x00FF];
 }
-void NESCPU::indx()
+void indx()
 {
-
+	word addr = (memory[PC++] + X) & 0x00FF;
+	OPERAND_ADDR = &memory[memory[addr] + (memory[addr + 1] << 8)];
 }
-void NESCPU::indy()
+void indy()
 {
-
+	word addr = (memory[PC++] + Y) & 0x00FF;
+	OPERAND_ADDR = &memory[memory[addr] + (memory[addr + 1] << 8)];
+	if (OP_CYCLES[OPCODE] == 5)
+		if ((byte)OPERAND_ADDR >> 8 != ((byte)OPERAND_ADDR + Y) >> 8)
+			clockTicks++;
 }
-void NESCPU::indabsx()
+void accum()
 {
-
-}
-void NESCPU::indzp()
-{
-
+	OPERAND_ADDR = &A;
 }
 
-void NESCPU::ADC()
+/* OPCODE DEFINITIONS */
+void ADC()
 {
+	ADDR_MODE[OPCODE]();
 	A += *OPERAND_ADDR + S[FLAG_CARRY];
 	S[FLAG_CARRY] = A > 0xFF;
 	S[FLAG_ZERO] = A == 0;
 	S[FLAG_OVERFLOW] = A > 0x7F;
 	S[FLAG_NEGATIVE_SIGN] = bitset<8>(A)[7];
 }// Add Memory to Accumulator with Carry
-void NESCPU::AND()
+void AND()
 {
 	A &= *OPERAND_ADDR;
 	S[FLAG_ZERO] = A == 0;
 	S[FLAG_NEGATIVE_SIGN] = bitset<8>(A)[7];
 }// "AND" Memory with Accumulator
-void NESCPU::ASL()
+void ASL()
 {
 	S[FLAG_CARRY] = bitset<8>(A)[7];
 	*OPERAND_ADDR <<= 1;
@@ -376,41 +397,41 @@ void NESCPU::ASL()
 	S[FLAG_NEGATIVE_SIGN] = bitset<8>(A)[7];
 }// Shift Left One Bit (Memory or Accumulator)
 
-void NESCPU::BCC()
+void BCC()
 {
 	if (!S[FLAG_CARRY])
 		PC += *OPERAND_ADDR;
 }// Branch on Carry Clear
-void NESCPU::BCS()
+void BCS()
 {
 	if (S[FLAG_CARRY])
 		PC += *OPERAND_ADDR;
 }// Branch on Carry Set
-void NESCPU::BEQ()
+void BEQ()
 {
 	if (S[FLAG_ZERO])
 		PC += *OPERAND_ADDR;
 }// Branch on Result Zero
-void NESCPU::BIT()
+void BIT()
 {
 	// TODO
 }// Test Bits in Memory with Accumulator
-void NESCPU::BMI()
+void BMI()
 {
 	if (S[FLAG_NEGATIVE_SIGN])
 		PC += *OPERAND_ADDR;
 }// Branch on Result Minus
-void NESCPU::BNE()
+void BNE()
 {
 	if (!S[FLAG_ZERO])
 		PC += *OPERAND_ADDR;
 }// Branch on Result not Zero
-void NESCPU::BPL()
+void BPL()
 {
 	if (!S[FLAG_NEGATIVE_SIGN])
 		PC += *OPERAND_ADDR;
 }// Branch on Result Plus
-void NESCPU::BRK()
+void BRK()
 {
 	S[FLAG_BREAKPOINT] = 1;
 	PC++;
@@ -419,126 +440,126 @@ void NESCPU::BRK()
 	stack[SP--] = (byte) S.to_ulong();
 	PC = memory[0xFFFE] | (memory[0xFFFF] << 8);
 }// Force Break
-void NESCPU::BVC()
+void BVC()
 {
 	if (!S[FLAG_OVERFLOW])
 		PC += *OPERAND_ADDR;
 }// Branch on Overflow Clear
-void NESCPU::BVS()
+void BVS()
 {
 	if (S[FLAG_OVERFLOW])
 		PC += *OPERAND_ADDR;
 }// Branch on Overflow Set
 
-void NESCPU::CLC()
+void CLC()
 {
 	S[FLAG_CARRY] = 0;
 }// Clear Carry Flag
-void NESCPU::CLD()
+void CLD()
 {
 	S[FLAG_DECIMAL] = 0;
 }// Clear Decimal Mode
-void NESCPU::CLI()
+void CLI()
 {
 	S[FLAG_INTERRUPT_DISABLE] = 0;
 }// Clear interrupt Disable Bit
-void NESCPU::CLV()
+void CLV()
 {
 	S[FLAG_OVERFLOW] = 0;
 }// Clear Overflow Flag
-void NESCPU::CMP()
+void CMP()
 {
 	S[FLAG_CARRY] = A >= *OPERAND_ADDR;
 	S[FLAG_ZERO] = A == *OPERAND_ADDR;
 	S[FLAG_NEGATIVE_SIGN] = bitset<8>(A - *OPERAND_ADDR)[7];
 }// Compare Memory and Accumulator
-void NESCPU::CPX()
+void CPX()
 {
 	S[FLAG_CARRY] = X >= *OPERAND_ADDR;
 	S[FLAG_ZERO] = X == *OPERAND_ADDR;
 	S[FLAG_NEGATIVE_SIGN] = bitset<8>(X - *OPERAND_ADDR)[7];
 }// Compare Memory and Index X
-void NESCPU::CPY()
+void CPY()
 {
 	S[FLAG_CARRY] = Y >= *OPERAND_ADDR;
 	S[FLAG_ZERO] = Y == *OPERAND_ADDR;
 	S[FLAG_NEGATIVE_SIGN] = bitset<8>(Y - *OPERAND_ADDR)[7];
 }// Compare Memory and Index Y
 
-void NESCPU::DEC()
+void DEC()
 {
 	--*OPERAND_ADDR;
 	S[FLAG_ZERO] = *OPERAND_ADDR == 0;
 	S[FLAG_NEGATIVE_SIGN] = bitset<8>(*OPERAND_ADDR)[7];
 }// Decrement Memory by One
-void NESCPU::DEX()
+void DEX()
 {
 	--X;
 	S[FLAG_ZERO] = X == 0;
 	S[FLAG_NEGATIVE_SIGN] = bitset<8>(X)[7];
 }// Decrement Index X by One
-void NESCPU::DEY()
+void DEY()
 {
 	--Y;
 	S[FLAG_ZERO] = Y == 0;
 	S[FLAG_NEGATIVE_SIGN] = bitset<8>(Y)[7];
 }// Decrement Index Y by One
-void NESCPU::EOR()
+void EOR()
 {
 	A ^= *OPERAND_ADDR;
 	S[FLAG_ZERO] = A == 0;
 	S[FLAG_NEGATIVE_SIGN] = bitset<8>(A)[7];
 }// "Exclusive-Or" Memory with Accumulator
 
-void NESCPU::INC()
+void INC()
 {
 	++*OPERAND_ADDR;
 	S[FLAG_ZERO] = *OPERAND_ADDR == 0;
 	S[FLAG_NEGATIVE_SIGN] = bitset<8>(*OPERAND_ADDR)[7];
 }// Increment Memory by One
-void NESCPU::INX()
+void INX()
 {
 	++X;
 	S[FLAG_ZERO] = X == 0;
 	S[FLAG_NEGATIVE_SIGN] = bitset<8>(X)[7];
 }// Increment Index X by One
-void NESCPU::INY()
+void INY()
 {
 	++Y;
 	S[FLAG_ZERO] = Y == 0;
 	S[FLAG_NEGATIVE_SIGN] = bitset<8>(Y)[7];
 }// Increment Index Y by One
 
-void NESCPU::JMP()
+void JMP()
 {
 	PC = *OPERAND_ADDR;
 }// Jump to New Location
-void NESCPU::JSR()
+void JSR()
 {
 	stack[SP--] = PC >> 4;
 	stack[SP--] = PC & 0xFF;
 	PC = *OPERAND_ADDR;
 }// Jump to New Location Saving Return Address
 
-void NESCPU::LDA()
+void LDA()
 {
 	A = *OPERAND_ADDR;
 	S[FLAG_ZERO] = A == 0;
 	S[FLAG_NEGATIVE_SIGN] = bitset<8>(A)[7];
 }// Load Accumulator with Memory
-void NESCPU::LDX()
+void LDX()
 {
 	X = *OPERAND_ADDR;
 	S[FLAG_ZERO] = X == 0;
 	S[FLAG_NEGATIVE_SIGN] = bitset<8>(X)[7];
 }// Load Index X with Memory
-void NESCPU::LDY()
+void LDY()
 {
 	Y = *OPERAND_ADDR;
 	S[FLAG_ZERO] = Y == 0;
 	S[FLAG_NEGATIVE_SIGN] = bitset<8>(Y)[7];
 }// Load Index Y with Memory 
-void NESCPU::LSR()
+void LSR()
 {
 	S[FLAG_CARRY] = bitset<8>(*OPERAND_ADDR)[0];
 	*OPERAND_ADDR >>= 1;
@@ -546,38 +567,38 @@ void NESCPU::LSR()
 	S[FLAG_NEGATIVE_SIGN] = bitset<8>(*OPERAND_ADDR)[7];
 }// Shift Right One Bit(Memory or Accumulator)
 
-void NESCPU::NOP()
+void NOP()
 {
 	// this is a waste of code
 }// No Operation
 
-void NESCPU::ORA()
+void ORA()
 {
 	A |= *OPERAND_ADDR;
 	S[FLAG_ZERO] = A == 0;
 	S[FLAG_NEGATIVE_SIGN] = bitset<8>(A)[7];
 }// "OR" Memory with Accumulator
 
-void NESCPU::PHA()
+void PHA()
 {
 	stack[SP--] = A;
 }// Push Accumulator on Stack
-void NESCPU::PHP()
+void PHP()
 {
 	stack[SP--] = (byte)S.to_ulong();
 }// Push Processor Status on Stack
-void NESCPU::PLA()
+void PLA()
 {
 	A = stack[++SP];
 	S[FLAG_ZERO] = A == 0;
 	S[FLAG_NEGATIVE_SIGN] = bitset<8>(A)[7];
 }// Pull Accumulator from Stack
-void NESCPU::PLP()
+void PLP()
 {
 	S = stack[++SP];
 }// Pull Processor Status from Stack
 
-void NESCPU::ROL()
+void ROL()
 {
 	bitset<8> tmp(*OPERAND_ADDR);
 	bool old = tmp[7];
@@ -586,7 +607,7 @@ void NESCPU::ROL()
 	S[FLAG_CARRY] = old;
 	*OPERAND_ADDR = (byte)tmp.to_ulong();
 }// Rotate One Bit Left(Memory or Accumulator)
-void NESCPU::ROR()
+void ROR()
 {
 	bitset<8> tmp(*OPERAND_ADDR);
 	bool old = tmp[0];
@@ -595,17 +616,17 @@ void NESCPU::ROR()
 	S[FLAG_CARRY] = old;
 	*OPERAND_ADDR = (byte)tmp.to_ulong();
 }// Rotate One Bit Right(Memory or Accumulator)
-void NESCPU::RTI()
+void RTI()
 {
 	PLP();
 	RTS();
 }// Return from Interrupt
-void NESCPU::RTS()
+void RTS()
 {
 	PC = stack[++SP] | (stack[++SP] << 8);
 }// Return from Subroutine
 
-void NESCPU::SBC()
+void SBC()
 {
 	A -= *OPERAND_ADDR - !S[FLAG_CARRY];
 	S[FLAG_CARRY] = !bitset<8>(A)[7];
@@ -613,60 +634,60 @@ void NESCPU::SBC()
 	S[FLAG_OVERFLOW] = A > 0x7F;
 	S[FLAG_NEGATIVE_SIGN] = !S[FLAG_CARRY];
 }// Subtract Memory from Accumulator with Borrow
-void NESCPU::SEC()
+void SEC()
 {
 	S[FLAG_CARRY] = 1;
 }// Set Carry Flag
-void NESCPU::SED()
+void SED()
 {
 	S[FLAG_DECIMAL] = 1;
 }// Set Decimal Mode
-void NESCPU::SEI()
+void SEI()
 {
 	S[FLAG_INTERRUPT_DISABLE] = 1;
 }// Set Interrupt Disable Status
-void NESCPU::STA()
+void STA()
 {
 	*OPERAND_ADDR = A;
 }// Store Accumulator in Memory
-void NESCPU::STX()
+void STX()
 {
 	*OPERAND_ADDR = X;
 }// Store Index X in Memory
-void NESCPU::STY()
+void STY()
 {
 	*OPERAND_ADDR = Y;
 }// Store Index Y in Memory
 
-void NESCPU::TAX()
+void TAX()
 {
 	X = A;
 	S[FLAG_ZERO] = X == 0;
 	S[FLAG_NEGATIVE_SIGN] = bitset<8>(X)[7];
 }// Transfer Accumulator to Index X
-void NESCPU::TAY()
+void TAY()
 {
 	Y = A;
 	S[FLAG_ZERO] = Y == 0;
 	S[FLAG_NEGATIVE_SIGN] = bitset<8>(Y)[7];
 }// Transfer Accumulator to Index Y
-void NESCPU::TSX()
+void TSX()
 {
 	X = SP;
 	S[FLAG_ZERO] = X == 0;
 	S[FLAG_NEGATIVE_SIGN] = bitset<8>(X)[7];
 }// Transfer Stack Pointer to Index X
-void NESCPU::TXA()
+void TXA()
 {
 	A = X;
 	S[FLAG_ZERO] = A == 0;
 	S[FLAG_NEGATIVE_SIGN] = bitset<8>(A)[7];
 }// Transfer Index X to Accumulator
-void NESCPU::TXS()
+void TXS()
 {
 	SP = X;
 }// Transfer Index X to Stack Pointer
-void NESCPU::TYA()
+void TYA()
 {
 	A = Y;
 	S[FLAG_ZERO] = A == 0;
