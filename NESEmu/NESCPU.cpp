@@ -113,7 +113,9 @@ void (*OP_INSTR[0xFF])();
 /* ADDRESSING MODE ACCESSERS */
 byte OPCODE;
 byte* OPERAND_ADDR;
-word OPERAND_VAL;
+
+word OPERAND_W;
+byte TEMP_OP;
 
 int clockTicks = 0;
 
@@ -121,90 +123,101 @@ int clockTicks = 0;
 void NES_ADDR_implied()
 {
 	// do nothing
-	OPERAND_ADDR = &OPERAND_VAL; // to stop debug messages from crashing
+	OPERAND_ADDR = &memory[PC]; // to stop debug messages from crashing
+	printf("implied\n");
 }
 void NES_ADDR_immediate()
 {
-	OPERAND_VAL = memory[PC];
-	OPERAND_ADDR = &OPERAND_VAL;
+	OPERAND_ADDR = &memory[PC];
 	PC++;
+	printf("immediate\n");
 }
 void NES_ADDR_absolute()
 {
-	OPERAND_ADDR = &memory[memory[PC] + (memory[PC + 1] << 8)];
+	OPERAND_W = memory[PC] + ((word)memory[PC + 1] << 8);
+	OPERAND_ADDR = &memory[OPERAND_W];
 	PC += 2;
+	printf("absolute %X\n", OPERAND_W);
 }
 void NES_ADDR_relative() // fix
 {
-	OPERAND_VAL = memory[PC];
-	if (OPERAND_VAL & 0x80)
-		OPERAND_VAL -= (byte)0x100;
-	if (OPERAND_VAL >> 8 != PC >> 8)
+	TEMP_OP = memory[PC];
+	if ((word)TEMP_OP >> 8 != (word)PC >> 8)
 		clockTicks++;
-	OPERAND_ADDR = &OPERAND_VAL;
+	OPERAND_ADDR = &TEMP_OP;
 	PC++;
+	printf("relative\n");
 }
 void NES_ADDR_indirect()
 {
 	word addr = memory[PC] + (memory[PC + 1] << 8);
-	cout << (int)memory[addr] << " " << (int)memory[addr + 1];
-	OPERAND_VAL = memory[addr] + (memory[addr + 1] << 8);
-	OPERAND_ADDR = &OPERAND_VAL;
+	OPERAND_W = memory[addr] + ((word)memory[addr + 1] << 8);
+	OPERAND_ADDR = &memory[PC];
 	PC += 2;
+	printf("indirect\n");
 }
 void NES_ADDR_absx()
 {
-	OPERAND_VAL = memory[PC] + (memory[PC + 1] << 8);
+	OPERAND_W = memory[PC] + ((word)memory[PC + 1] << 8);
 	if (OP_CYCLES[OPCODE] == 4)
-		if (OPERAND_VAL >> 8 != (OPERAND_VAL + X) >> 8)
+		if (OPERAND_W >> 8 != (OPERAND_W + X) >> 8)
 			clockTicks++;
-	OPERAND_VAL += X;
-	OPERAND_ADDR = &memory[OPERAND_VAL];
+	OPERAND_W += X;
+	OPERAND_ADDR = &memory[OPERAND_W];
 	PC += 2;
+	printf("absx\n");
 }
 void NES_ADDR_absy()
 {
-	OPERAND_VAL = memory[PC] + (memory[PC + 1] << 8);
+	OPERAND_W = memory[PC] + ((word)memory[PC + 1] << 8);
 	if (OP_CYCLES[OPCODE] == 4)
-		if (OPERAND_VAL >> 8 != (OPERAND_VAL + Y) >> 8)
+		if (OPERAND_W >> 8 != (OPERAND_W + Y) >> 8)
 			clockTicks++;
-	OPERAND_VAL += Y;
-	OPERAND_ADDR = &memory[OPERAND_VAL];
+	OPERAND_W += Y;
+	OPERAND_ADDR = &memory[OPERAND_W];
 	PC += 2;
+	printf("absy\n");
 }
 void NES_ADDR_zp()
 {
 	OPERAND_ADDR = &memory[memory[PC]];
 	PC++;
+	printf("zp\n");
 }
 void NES_ADDR_zpx()
 {
 	OPERAND_ADDR = &memory[(memory[PC] + X) & 0x00FF];
 	PC++;
+	printf("zpx\n");
 }
 void NES_ADDR_zpy()
 {
 	OPERAND_ADDR = &memory[(memory[PC] + Y) & 0x00FF];
 	PC++;
+	printf("zpy\n");
 }
 void NES_ADDR_indx()
 {
 	word addr = (memory[PC] + X) & 0x00FF;
-	OPERAND_ADDR = &memory[memory[addr] + (memory[addr + 1] << 8)];
+	OPERAND_ADDR = &memory[memory[addr] + ((word)memory[addr + 1] << 8)];
 	PC++;
+	printf("indx\n");
 }
 void NES_ADDR_indy()
 {
-	word addr = (memory[PC] + Y) & 0x00FF;
-	OPERAND_ADDR = &memory[memory[addr] + (memory[addr + 1] << 8)];
+	word addr = memory[PC];
+	OPERAND_W = (memory[addr] + ((word)memory[addr + 1] << 8)) + Y;
+	OPERAND_ADDR = &memory[OPERAND_W];
 	if (OP_CYCLES[OPCODE] == 5)
-		if ((byte)OPERAND_ADDR >> 8 != ((byte)OPERAND_ADDR + Y) >> 8)
+		if ((word)OPERAND_ADDR >> 8 != ((word)OPERAND_ADDR + Y) >> 8)
 			clockTicks++;
 	PC++;
+	printf("indy\n");
 }
 void NES_ADDR_accum()
 {
 	OPERAND_ADDR = &A;
+	printf("accum\n");
 }
 
 /* OPCODE DEFINITIONS */
@@ -233,36 +246,38 @@ void NES_OP_ASL()
 void NES_OP_BCC()
 {
 	if (!S[FLAG_CARRY])
-		PC += *OPERAND_ADDR;
+		PC += (char)*OPERAND_ADDR;
 }// Branch on Carry Clear
 void NES_OP_BCS()
 {
 	if (S[FLAG_CARRY])
-		PC += *OPERAND_ADDR;
+		PC += (char)*OPERAND_ADDR;
 }// Branch on Carry Set
 void NES_OP_BEQ()
 {
 	if (S[FLAG_ZERO])
-		PC += *OPERAND_ADDR;
+		PC += (char)*OPERAND_ADDR;
 }// Branch on Result Zero
 void NES_OP_BIT()
 {
-	// TODO
+	S[FLAG_ZERO] = A & *OPERAND_ADDR == 0;
+	S[FLAG_OVERFLOW] = bitset<8>(*OPERAND_ADDR)[6];
+	S[FLAG_NEGATIVE_SIGN] = bitset<8>(*OPERAND_ADDR)[7];
 }// Test Bits in Memory with Accumulator
 void NES_OP_BMI()
 {
 	if (S[FLAG_NEGATIVE_SIGN])
-		PC += *OPERAND_ADDR;
+		PC += (char)*OPERAND_ADDR;
 }// Branch on Result Minus
 void NES_OP_BNE()
 {
 	if (!S[FLAG_ZERO])
-		PC += *OPERAND_ADDR;
+		PC += (char)*OPERAND_ADDR;
 }// Branch on Result not Zero
 void NES_OP_BPL()
 {
 	if (!S[FLAG_NEGATIVE_SIGN])
-		PC += *OPERAND_ADDR;
+		PC += (char)*OPERAND_ADDR;
 }// Branch on Result Plus
 void NES_OP_BRK()
 {
@@ -276,12 +291,12 @@ void NES_OP_BRK()
 void NES_OP_BVC()
 {
 	if (!S[FLAG_OVERFLOW])
-		PC += *OPERAND_ADDR;
+		PC += (char)*OPERAND_ADDR;
 }// Branch on Overflow Clear
 void NES_OP_BVS()
 {
 	if (S[FLAG_OVERFLOW])
-		PC += *OPERAND_ADDR;
+		PC += (char)*OPERAND_ADDR;
 }// Branch on Overflow Set
 
 void NES_OP_CLC()
@@ -365,13 +380,13 @@ void NES_OP_INY()
 
 void NES_OP_JMP()
 {
-	PC = *OPERAND_ADDR;
+	PC = OPERAND_W;
 }// Jump to New Location
 void NES_OP_JSR()
 {
-	stack[SP--] = PC >> 4;
+	stack[SP--] = PC >> 8;
 	stack[SP--] = PC & 0xFF;
-	PC = *OPERAND_ADDR;
+	PC = OPERAND_W;
 }// Jump to New Location Saving Return Address
 
 void NES_OP_LDA()
@@ -456,7 +471,8 @@ void NES_OP_RTI()
 }// Return from Interrupt
 void NES_OP_RTS()
 {
-	PC = stack[++SP] | (stack[++SP] << 8);
+	PC = stack[SP + 1] | ((word)stack[SP + 2] << 8);
+	SP += 2;
 }// Return from Subroutine
 
 void NES_OP_SBC()
@@ -536,7 +552,7 @@ void NES_init()
 	printf("NES EMULATOR (6502) by GORDON GUAN\n");
 	printf("REGISTER MAPPING:\n");
 	printf("A:0x%X; X:0x%X; Y:0x%X; S:0x%X\nSP:0x%X; PC:0x%X; OP_VAL:0x%X\n\n", 
-		&A, &X, &Y, &S, &SP, &PC, OPERAND_VAL);
+		&A, &X, &Y, &S, &SP, &PC, OPERAND_W);
 	printf(":: INSTRUCTION EXECUTION\n");
 	/* DECLARE OPCODE PROPS */
 	OP_CYCLES[0x00] = 7; OP_INSTR[0x00] = NES_OP_BRK; ADDR_MODE[0x00] = NES_ADDR_implied;
@@ -798,22 +814,25 @@ void NES_init()
 }
 void NES_exec()
 {
-	OPERAND_VAL = 0;
+	OPERAND_W = 0;
 	OPERAND_ADDR = 0;
 	OPCODE = memory[PC++];
 	clockTicks += OP_CYCLES[OPCODE];
-	ADDR_MODE[OPCODE]();
 	byte addr = ((OPCODE & 0xF0) >> 4) * 0x10 + (OPCODE & 0x0F);
-	printf("%s(0x%X)\n  BEFORE: OA:$0x%X-OV:0x%X | A=0x%X;X=0x%X;Y=0x%X;S=%s;SP=0x%X;PC=0x%X\n",
+	
+	ADDR_MODE[OPCODE]();
+	
+	printf("%s(0x%X)\n BEFORE:OA:$0x%X-OV:0x%X|A=0x%X;X=0x%X;Y=0x%X;S=%s;SP=0x%X;PC=0x%X\n",
 		OP_NAME[addr].c_str(), (int)OPCODE, &OPERAND_ADDR, *OPERAND_ADDR, A, X, Y, S.to_string().c_str(), SP, PC);
 	OP_INSTR[OPCODE]();
-	printf("   AFTER: OA:$0x%X-OV:0x%X | A=0x%X;X=0x%X;Y=0x%X;S=%s;SP=0x%X;PC=0x%X\n",
+	printf("  AFTER:OA:$0x%X-OV:0x%X|A=0x%X;X=0x%X;Y=0x%X;S=%s;SP=0x%X;PC=0x%X\n",
 		&OPERAND_ADDR, *OPERAND_ADDR, A, X, Y, S.to_string().c_str(), SP, PC);
 }
 void NES_doCPUTicks()
 {
 
 }
+
 
 /* DEBUGGING */
 void NES_setInstructions(byte* inst, int len)
